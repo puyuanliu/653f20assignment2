@@ -28,20 +28,21 @@ def main():
   # Learner setup block
   torch.manual_seed(seed)
   ####### Start
+  device = "cpu"
   my_policy = policy_MLP()
   my_baseline = baseline_MLP()
   my_policy.to(device)
   my_baseline.to(device)
-  policy_optimizer = optim.Adam(my_policy.parameters(), lr=0.01)
-  basline_optimizer = optim.Adam(my_baseline.parameters(), lr=0.01)
+  policy_optimizer = optim.Adam(my_policy.parameters(), lr=0.003)
+  baseline_optimizer = optim.Adam(my_baseline.parameters(), lr=0.003, eps=1e-07)
   rand_generator = np.random.RandomState(seed)
   batch_size = 30
-  lambda_ratio = 0.9
-  discount_ratio = 0.9
+  lambda_ratio = 1
+  discount_ratio = 1
   # num_epochs = 10
   # mini_batch_size = 20
   # num_mini_batch = int(batch_size/mini_batch_size)
-  max_episode_length = 2000
+  max_episode_length = 700
   state_batch = torch.zeros([batch_size,max_episode_length,o_dim], dtype=torch.float32, device=device)
   action_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.long, device=device)
   reward_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
@@ -93,7 +94,7 @@ def main():
         first_term = 0
         second_term = 0
         policy_optimizer.zero_grad()
-        basline_optimizer.zero_grad()
+        baseline_optimizer.zero_grad()
         # For each episode, we calculate the loss
         for e in range(batch_size):
             # we first calculate the Goal (return) for every time steps
@@ -123,15 +124,23 @@ def main():
                 action_probability = output[current_action] #probability of current action
                 first_term += torch.log(action_probability)*current_advantage
                 second_term += torch.square(current_goal - current_state_value)
-                
-        mean_first_term = -1*first_term/sum(time_steps_batch)
+        
+        mean_first_term = first_term/sum(time_steps_batch)
         mean_second_term = second_term/sum(time_steps_batch)
-        #loss =  -1*mean_first_term + mean_second_term
-        #loss.backward()
-        mean_first_term.backward()
-        mean_second_term.backward()
+        loss =  -1*mean_first_term + mean_second_term
+        print(-1*mean_first_term)
+        loss.backward()
+        #mean_first_term.backward()
+        #mean_second_term.backward()
         policy_optimizer.step()
-        basline_optimizer.step()
+        baseline_optimizer.step()
+        print("I reach here")
+        del state_batch
+        del action_batch
+        del reward_batch
+        del goal_batch
+        del advantage_batch
+        torch.cuda.empty_cache()
         state_batch = torch.zeros([batch_size,max_episode_length,o_dim], dtype=torch.float32, device=device)
         action_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.long, device=device)
         reward_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
@@ -153,9 +162,9 @@ def main():
       avgrets.append(np.mean(rets))
       print(np.mean(rets))
       rets = []
-      #plt.clf()
-      #plt.plot(range(checkpoint, (steps+1)+checkpoint, checkpoint), avgrets)
-      #plt.pause(0.001)
+      plt.clf()
+      plt.plot(range(checkpoint, (steps+1)+checkpoint, checkpoint), avgrets)
+      plt.pause(0.001)
   name = sys.argv[0].split('.')[-2].split('_')[-1]
   data = np.zeros((2, len(avgrets)))
   data[0] = range(checkpoint, num_steps+1, checkpoint)
