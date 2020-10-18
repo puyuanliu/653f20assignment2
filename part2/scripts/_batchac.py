@@ -28,13 +28,12 @@ def main():
   # Learner setup block
   torch.manual_seed(seed)
   ####### Start
-  device = "cpu"
   my_policy = policy_MLP()
   my_baseline = baseline_MLP()
   my_policy.to(device)
   my_baseline.to(device)
-  policy_optimizer = optim.Adam(my_policy.parameters(), lr=0.003)
-  baseline_optimizer = optim.Adam(my_baseline.parameters(), lr=0.003, eps=1e-07)
+  policy_optimizer = optim.Adam(my_policy.parameters(), lr=0.01)
+  baseline_optimizer = optim.Adam(my_baseline.parameters(), lr=0.01)
   rand_generator = np.random.RandomState(seed)
   batch_size = 30
   lambda_ratio = 1
@@ -42,12 +41,10 @@ def main():
   # num_epochs = 10
   # mini_batch_size = 20
   # num_mini_batch = int(batch_size/mini_batch_size)
-  max_episode_length = 700
+  max_episode_length = 1000
   state_batch = torch.zeros([batch_size,max_episode_length,o_dim], dtype=torch.float32, device=device)
-  action_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.long, device=device)
+  action_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.int, device=device)
   reward_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
-  goal_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
-  advantage_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
   time_steps_batch = torch.zeros([batch_size,1], dtype=torch.long, device=device)
   episode_counter = 0 # counter of number of episodes
   time_counter = 0 # number of time steps of current episodes
@@ -95,60 +92,46 @@ def main():
         second_term = 0
         policy_optimizer.zero_grad()
         baseline_optimizer.zero_grad()
+        first_run = True
         # For each episode, we calculate the loss
         for e in range(batch_size):
             # we first calculate the Goal (return) for every time steps
             max_time_step = time_steps_batch[e]
             #notice now the goal here is the lambda return
-            goal_batch[e][max_time_step-1] = reward_batch[e][max_time_step] # set the last return to be the last reward
-            for t in reversed(range(max_time_step-1)):
-                # From the last time steps going backward                      
-                next_state = state_batch[e][t+1]
-                next_state_value = my_baseline(next_state)
-                goal_batch[e][t] = reward_batch[e][t+1] + discount_ratio*((1-lambda_ratio)*next_state_value + lambda_ratio*goal_batch[e][t+1])
-            #Now we calculate the advantage function
+            previous_goal = 0
             for t in reversed(range(max_time_step)):
-                state = state_batch[e][t]
-                state_value = my_baseline(state)
-                advantage_batch[e][t] = goal_batch[e][t] - state_value
-            #Now we calculate the loss at every time step
-            for t in range(max_time_step):
                 current_state = state_batch[e][t] # the observation at time step t
                 current_state_value = my_baseline(current_state)
                 current_action = action_batch[e][t] # the action at time step t
                 output = my_policy(current_state) # probability of actions
-                current_goal = goal_batch[e][t]
-                current_advantage = advantage_batch[e][t]
+                if first_run:
+                    current_goal = reward_batch[e][max_time_step] # G_T
+                    first_run = False
+                    previous_goal = current_goal
+                else:
+                    next_state = state_batch[e][t+1]
+                    next_state_value = my_baseline(next_state)
+                    current_goal = reward_batch[e][t+1] + discount_ratio*((1-lambda_ratio)*next_state_value + lambda_ratio*previous_goal)
+                    previous_goal = current_goal
+                current_advantage = current_goal- current_state_value #H_T in the first run
                 current_goal = float(current_goal.cpu().detach().numpy()) # make the goal independent of gradient
                 current_advantage = float(current_advantage.cpu().detach().numpy()) # make the advantage independent of gradient
                 action_probability = output[current_action] #probability of current action
                 first_term += torch.log(action_probability)*current_advantage
                 second_term += torch.square(current_goal - current_state_value)
-        
         mean_first_term = first_term/sum(time_steps_batch)
         mean_second_term = second_term/sum(time_steps_batch)
-        loss =  -1*mean_first_term + mean_second_term
-        print(-1*mean_first_term)
+        loss =  -mean_first_term + mean_second_term
         loss.backward()
-        #mean_first_term.backward()
-        #mean_second_term.backward()
         policy_optimizer.step()
         baseline_optimizer.step()
-        print("I reach here")
-        del state_batch
-        del action_batch
-        del reward_batch
-        del goal_batch
-        del advantage_batch
-        torch.cuda.empty_cache()
-        state_batch = torch.zeros([batch_size,max_episode_length,o_dim], dtype=torch.float32, device=device)
-        action_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.long, device=device)
-        reward_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
-        goal_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
-        advantage_batch = torch.zeros([batch_size,max_episode_length], dtype=torch.float32, device=device)
+        for e in range(batch_size):
+            state_batch[e] = 0
+            action_batch[e] = 0
+            reward_batch[e] = 0
+            time_steps_batch[e] = 0
         episode_counter = 0 # counter of number of episodes
-        first_term = 0
-        second_term = 0
+        time_counter = 0 # number of time steps of current episodes
     ####### End
     
     # Log
@@ -160,7 +143,6 @@ def main():
 
     if (steps+1) % checkpoint == 0:
       avgrets.append(np.mean(rets))
-      print(np.mean(rets))
       rets = []
       plt.clf()
       plt.plot(range(checkpoint, (steps+1)+checkpoint, checkpoint), avgrets)

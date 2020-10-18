@@ -120,11 +120,10 @@ def main():
 
     if (steps+1) % checkpoint == 0:
       avgrets.append(np.mean(rets))
-      print(np.mean(rets))
       rets = []
-      #plt.clf()
-      #plt.plot(range(checkpoint, (steps+1)+checkpoint, checkpoint), avgrets)
-      #plt.pause(0.001)
+      plt.clf()
+      plt.plot(range(checkpoint, (steps+1)+checkpoint, checkpoint), avgrets)
+      plt.pause(0.001)
   name = sys.argv[0].split('.')[-2].split('_')[-1]
   data = np.zeros((2, len(avgrets)))
   data[0] = range(checkpoint, num_steps+1, checkpoint)
